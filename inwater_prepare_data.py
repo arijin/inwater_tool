@@ -8,6 +8,7 @@ import inwater_util as utils
 
 import os
 import sys
+import math
 import numpy as np
 import geopy as gp
 import cv2
@@ -15,6 +16,8 @@ from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 # sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
+NUM_SAMPLE = 3
+split = "training"
 
 
 def generate_calib_parames_file(index, split="training"):
@@ -156,7 +159,11 @@ def generate_label_file(index, split="training"):
             # project the 3d bounding box into the image plane
             # print(tx, ty, mx, my)
             # print("corners_3d", corners_3d)
-            corners_2d = utils.project_to_image(corners_3d, calib.P, calib.B2C)
+            n = corners_3d.shape[0]
+            pts_3d_extend = np.hstack((corners_3d, np.ones((n, 1))))
+            corners_3d = np.dot(pts_3d_extend, np.transpose(
+                calib.B2C))  # 8x4 4x3 = 8x3
+            corners_2d = utils.project_to_image(corners_3d, calib.P)
             # print("corners_2d", corners_2d)
             xmin = corners_2d[0:4].min(axis=0)[0]
             ymin = corners_2d.min(axis=0)[1]
@@ -168,7 +175,8 @@ def generate_label_file(index, split="training"):
             ymin = min(max(ymin, 0), calib.imgH)
             ymax = min(max(ymax, 0), calib.imgH)
             cutted_area = (xmax - xmin) * (ymax - ymin)
-            truncation = cutted_area/(area + 1e-6)
+            truncation = int(cutted_area) / (area + 1e-6)
+            truncation = float(truncation)
             if truncation < 0.3:
                 xmin, ymin, xmax, ymax = 0, 0, 0, 0
 
@@ -208,9 +216,8 @@ def generate_label_file(index, split="training"):
 
 
 def prepare_data():
-    split = "training"
     # generate_calib_parames_file(0, split)
-    for data_idx in range(3):
+    for data_idx in range(NUM_SAMPLE):
         generate_label_file(data_idx, split)
 
 

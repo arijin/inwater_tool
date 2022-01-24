@@ -43,6 +43,12 @@ class Object3d(object):
         print('3d bbox location, ry: (%f, %f, %f), %f, %f, %f' %
               (self.t[0], self.t[1], self.t[2], self.rr, self.rp, self.ry))
 
+    def is_in_image(self):
+        if self.xmin == 0 and self.ymin == 0 and self.xmax == 0 and self.ymax == 0:
+            return False
+        else:
+            return True
+
 
 class Calibration(object):
     def __init__(self, calib_filepath):
@@ -59,6 +65,10 @@ class Calibration(object):
         self.C2B = calibs['Tr_cam_to_base']  # bc_T
         self.C2B = np.reshape(self.C2B, [3, 4])
         self.B2C = gp.inverse_rigid_trans(self.C2B)  # cb_T
+
+        self.V2C = np.dot(gp.Tcart2hom(self.B2C),
+                          gp.Tcart2hom(self.V2B))  # cv_T
+        self.V2C = self.V2C[0:3, :]
 
         # Camera intrinsics and extrinsics
         self.P = calibs['P']
@@ -90,13 +100,13 @@ def read_label(label_filename):
     return objects
 
 
-def project_to_image(pts_3d, P, ExtrincT=None):
+def project_to_image(pts_3d, P):
     ''' Project 3d points to image plane.
 
     Usage: pts_2d = projectToImage(pts_3d, P)
       input: pts_3d: nx3 matrix
              P:      3x4 projection matrix
-             ExtrincT:      4x4 extrinsics
+             ExtrincT:      3x4 extrinsics
       output: pts_2d: nx2 matrix
 
       P(3x4) dot pts_3d_extended(4xn) = projected_pts_2d(3xn)
@@ -107,10 +117,7 @@ def project_to_image(pts_3d, P, ExtrincT=None):
     '''
     n = pts_3d.shape[0]
     pts_3d_extend = np.hstack((pts_3d, np.ones((n, 1))))
-    print(('pts_3d_extend shape: ', pts_3d_extend.shape))
-    if ExtrincT is not None:
-        ExtrincT = gp.Tcart2hom(ExtrincT)
-        pts_3d_extend = np.dot(pts_3d_extend, np.transpose(ExtrincT))  # nx4
+    # print(('pts_3d_extend shape: ', pts_3d_extend.shape))
     pts_3d_extend = pts_3d_extend[:, [1, 2, 0, 3]]
     pts_3d_extend[:, 0] = -pts_3d_extend[:, 0]
     pts_3d_extend[:, 1] = -pts_3d_extend[:, 1]
@@ -118,6 +125,24 @@ def project_to_image(pts_3d, P, ExtrincT=None):
     pts_2d[:, 0] /= pts_2d[:, 2]
     pts_2d[:, 1] /= pts_2d[:, 2]
     return pts_2d[:, 0:2]
+
+
+def project_pc_to_camera(pts_3d, ExtrincT):
+    n = pts_3d.shape[0]
+    pts_3d_extend = np.hstack((pts_3d, np.ones((n, 1))))
+    pts_3d = np.dot(pts_3d_extend, np.transpose(
+        ExtrincT))  # nx4 4x3 = nx3
+    return pts_3d
+
+
+def project_pc_to_image(pts_3d, P, ExtrincT=None):
+    if ExtrincT is not None:
+        n = pts_3d.shape[0]
+        pts_3d_extend = np.hstack((pts_3d, np.ones((n, 1))))
+        pts_3d = np.dot(pts_3d_extend, np.transpose(
+            ExtrincT))  # nx4 4x3 = nx3
+    pts_2d = project_to_image(pts_3d, P)
+    return pts_2d
 
 
 def compute_box_3d(obj, P, ExtrincT=None):
@@ -139,12 +164,12 @@ def compute_box_3d(obj, P, ExtrincT=None):
     '''
     qs: (8,3) array of vertices for the 3d box in following order:
           5 -------- 4
-         /|         /|
+         /|              /|
         6 -------- 7 .
-        | |        | |
-        . 1 -------- 0
-        |/    o    |/
-        2 -------- 3
+        |  |             |  |
+        . 1 --------  0
+        |/       o     |/
+        2 --------  3
     '''
     x_corners = [l/2, l/2, -l/2, -l/2, l/2, l/2, -l/2, -l/2]
     y_corners = [w/2, -w/2, -w/2, w/2, w/2, -w/2, -w/2, w/2]
@@ -156,13 +181,22 @@ def compute_box_3d(obj, P, ExtrincT=None):
     corners_3d[0, :] = corners_3d[0, :] + obj.t[0]
     corners_3d[1, :] = corners_3d[1, :] + obj.t[1]
     corners_3d[2, :] = corners_3d[2, :] + obj.t[2]
+
+    corners_3d = np.transpose(corners_3d)  # 8x3
+
     # print 'cornsers_3d: ', corners_3d
     # only draw 3d bounding box for objs in front of the camera
-    if np.any(corners_3d[0, :] < 0.1):
+    if np.any(corners_3d[:, 0] < 0.1):
         corners_2d = None
-        return corners_2d, np.transpose(corners_3d)
+        return corners_2d, corners_3d
+
+    if ExtrincT is not None:
+        n = corners_3d.shape[0]
+        pts_3d_extend = np.hstack((corners_3d, np.ones((n, 1))))
+        corners_3d = np.dot(pts_3d_extend, np.transpose(
+            ExtrincT))  # 8x4 4x3 = 8x3
 
     # project the 3d bounding box into the image plane
-    corners_2d = project_to_image(np.transpose(corners_3d), P, ExtrincT)
+    corners_2d = project_to_image(corners_3d, P)
     # print 'corners_2d: ', corners_2d
-    return corners_2d, np.transpose(corners_3d)
+    return corners_2d, corners_3d
