@@ -27,10 +27,23 @@ def initialize_figure(bgcolor=(0.16, 0.16, 0.24)):
                 color=(0, 1, 0), tube_radius=0.2, figure=fig)
     mlab.plot3d([0, axes[2, 0]], [0, axes[2, 1]], [0, axes[2, 2]],
                 color=(0.1, 0.1, 0.88), tube_radius=0.2, figure=fig)
-    mlab.orientation_axes()
-    mlab.view(azimuth=60, elevation=170, focalpoint=[
-              12.0909996, -1.04700089, -2.03249991], distance=62, figure=fig)
+    # mlab.orientation_axes()
+    # mlab.view(azimuth=190, elevation=80, focalpoint=[
+    #           0, 0, 0], distance=30, figure=fig)  # azimuth是方位角（水平面角度方位），elevation是高度角（z轴的指向），可以想象成经纬度来考虑；标轴来考虑的先转xy平面，再垂直方向转z轴
+    # cam = fig.scene.camera
+    # cam.zoom(10)
+    # mlab.draw()
     return fig
+
+
+def adjust_view(azimuth=0, elevation=0, focalpoint=[0, 0, 0], distance=100, fig=None):
+    # azimuth是方位角（水平面角度方位），elevation是高度角（z轴的指向），可以想象成经纬度来考虑；
+    # 标轴来考虑的先转xy平面，再垂直方向转z轴；调整步骤是先找方位角和高度角；
+    # 确定以后找焦点（放大聚焦到的点）（滚轮拖动）；最后找距离（滚轮滚动）
+    mlab.orientation_axes()
+    if fig != None:
+        mlab.view(azimuth=azimuth, elevation=elevation, focalpoint=focalpoint,
+                  distance=distance, figure=fig)
 
 
 def save_fig(filename):

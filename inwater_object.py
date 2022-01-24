@@ -5,7 +5,7 @@ Date: Jan. 2022
 '''
 from __future__ import print_function
 # 必须在有import cv2的库之前import有mayavi的库
-from viz_utils.lidarplot import initialize_figure, save_fig, draw_lidar_simple, draw_lidar, draw_gt_boxes3d, draw_heading_arrow
+from viz_utils.lidarplot import initialize_figure, adjust_view, save_fig, draw_lidar_simple, draw_lidar, draw_gt_boxes3d, draw_heading_arrow
 from viz_utils.plots3d import draw_projected_box3d
 from viz_utils.plots import Annotator, colors, save_one_box
 import inwater_util as utils
@@ -80,10 +80,18 @@ class inwater_object(object):
         img = cv2.imread(img_filename)
         return img
 
-    # (x, y, z, i)
-    def get_lidar(self, idx):
+    # (x, y, z)
+    def get_velo(self, idx):
         assert(idx < self.num_samples)
         lidar_filename = os.path.join(self.lidar_dir, '%06d.bin' % (idx))
+        scan = np.fromfile(lidar_filename, dtype=np.float)  # read bin file.
+        scan = scan.reshape((-1, 3))
+        return scan
+
+    # (x, y, z)
+    def get_livox(self, idx):
+        assert(idx < self.num_samples)
+        lidar_filename = os.path.join(self.livox_dir, '%06d.bin' % (idx))
         scan = np.fromfile(lidar_filename, dtype=np.float)  # read bin file.
         scan = scan.reshape((-1, 3))
         return scan
@@ -174,6 +182,10 @@ def show_lidar_with_boxes(pc_lidar, objects, calib,
             draw_heading_arrow([box3d_pts_3d], fig=fig, color=(1, 0, 0))
 
     draw_lidar(pc_lidar, fig=fig)
+    # livox远景：azimuth=180, elevation=72, focalpoint=[85, 0, 0], distance=220
+    # livox近景：azimuth=180, elevation=72, focalpoint=[35, 0, 0], distance=220
+    # velodyne俯视：azimuth=90, elevation=0, focalpoint=[32, 0, 0], distance=600
+    adjust_view(90, 0, [32, 0, 0], 600, fig)
 
 
 def get_lidar_in_image_fov(pc_lidar, calib, xmin, ymin, xmax, ymax,
@@ -221,20 +233,22 @@ def dataset_viz():
         print(data_idx)
         # sensor data
         img = dataset.get_image(data_idx)  # cv::Mat
-        pc_velo = dataset.get_lidar(data_idx)[:, 0:3]
+        pc_velo = dataset.get_velo(data_idx)[:, 0:3]
+        pc_livox = dataset.get_livox(data_idx)[:, 0:3]
+        pc = pc_velo  # pc_velo or pc_livox
         calib = dataset.get_calibration(data_idx)
         img_height, img_width, img_channel = img.shape
         print(('Image shape: ', img.shape))
-        print('lidar shape:', pc_velo.shape)
+        print('lidar shape:', pc.shape)
         # Show lidar points on image.
         lidar_on_img = show_lidar_on_image(
-            pc_velo, img, calib, calib.imgW, calib.imgH)
+            pc, img, calib, calib.imgW, calib.imgH)
         lidar_on_img = cv2.cvtColor(lidar_on_img, cv2.COLOR_BGR2RGB)
         Image.fromarray(lidar_on_img).show()
         # Load data from dataset.
         objects = dataset.get_label_objects(data_idx)
         # Show all LiDAR points. Draw 3d box in LiDAR point cloud.
-        show_lidar_with_boxes(pc_velo, objects, calib,
+        show_lidar_with_boxes(pc, objects, calib,
                               True, img_width, img_height)
         # Draw 2d, 3d box in image.
         for object in objects[:]:
