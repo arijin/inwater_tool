@@ -19,6 +19,8 @@ from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
+NUM_SAMPLE = 21
+split = "training"
 
 try:
     raw_input          # Python 2
@@ -58,7 +60,7 @@ class inwater_object(object):
         self.split_dir = os.path.join(root_dir, split)
 
         if split == 'training':
-            self.num_samples = 10
+            self.num_samples = NUM_SAMPLE
         elif split == 'testing':
             self.num_samples = 0
         else:
@@ -215,7 +217,8 @@ def show_lidar_on_image(pc_lidar, img, calib, img_width, img_height):
     cmap = np.array([cmap(i) for i in range(256)])[:, :3]*255
 
     for i in range(imgfov_pts_2d.shape[0]):
-        depth = imgfov_pc_rect[i, 2]
+        depth = imgfov_pc_rect[i, 0]
+        # print(depth)
         color = cmap[int(640.0/depth), :]
         cv2.circle(img1, (int(np.round(imgfov_pts_2d[i, 0])),
                           int(np.round(imgfov_pts_2d[i, 1]))),
@@ -225,11 +228,12 @@ def show_lidar_on_image(pc_lidar, img, calib, img_width, img_height):
 
 
 def dataset_viz():
-    dataset = inwater_object(os.path.join(ROOT_DIR, 'inWater/object'))
+    dataset = inwater_object(os.path.join(
+        ROOT_DIR, 'inWater/object'), split=split)
     annotator = DetectAnnotator(os.path.join(
         ROOT_DIR, 'inwater_tool/inwater.yaml'))
 
-    for data_idx in range(3):  # len(dataset)
+    for data_idx in range(len(dataset)):  # len(dataset)
         print(data_idx)
         # sensor data
         img = dataset.get_image(data_idx)  # cv::Mat

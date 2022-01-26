@@ -16,20 +16,15 @@ from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 # sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
-NUM_SAMPLE = 3
+NUM_SAMPLE = 21
 split = "training"
 
 
-def generate_calib_parames_file(index, split="training"):
-    root_dir = os.path.join(ROOT_DIR, 'inWater/object')
-    split_dir = os.path.join(root_dir, split)
-
-    src_calib_dir = os.path.join(split_dir, 'calib_raw')
-    des_calib_dir = os.path.join(split_dir, 'calib')
-
-    src_calib_filename = os.path.join(src_calib_dir, '%06d.txt' % (index))
+def read_info_file(filepath):
+    ''' Read in an information file and parse into a dictionary.
+    '''
     data = {}
-    with open(src_calib_filename, 'r') as f:
+    with open(filepath, 'r') as f:
         for line in f.readlines():
             line = line.rstrip()
             if len(line) == 0:
@@ -41,20 +36,15 @@ def generate_calib_parames_file(index, split="training"):
                 data[key] = np.array([float(x) for x in value.split()])
             except ValueError:
                 pass
+    return data
 
-    # process data: find paramters in reference to KITTI, the image is undistorted.
-    # Rigid transform from Velodyne coord to base link coord
-    V2B = data['Tr_velo_to_base']  # bv_T
-    V2B = np.reshape(V2B, [3, 4])
-    B2V = gp.inverse_rigid_trans(V2B)  # vb_T
-    # Rigid transform from Camera coord to base link coord
-    C2B = data['Tr_cam_to_base']  # bc_T
-    C2B = np.reshape(C2B, [3, 4])
-    B2C = gp.inverse_rigid_trans(C2B)  # cb_T
 
-    # Camera intrinsics and extrinsics
-    P = data['P']
-    P = np.reshape(P, [3, 4])
+def rectify_motion(x, y, yaw, linearx, angularz, timestamp, base_timestamp):
+    deltaT = base_timestamp - timestamp
+    yaw = yaw + angularz * deltaT
+    x = x + np.cos(yaw) * linearx * deltaT
+    y = y + np.sin(yaw) * linearx * deltaT
+    return x[0], y[0], yaw[0]
 
 
 def generate_label_file(index, split="training"):
@@ -65,19 +55,46 @@ def generate_label_file(index, split="training"):
     root_dir = os.path.join(ROOT_DIR, 'inWater/object')
     split_dir = os.path.join(root_dir, split)
 
+    info_dir = os.path.join(split_dir, 'info')
     src_label_dir = os.path.join(split_dir, 'label_2_raw')
     des_label_dir = os.path.join(split_dir, 'label_2')
 
+    # read info
+    data = read_info_file(os.path.join(info_dir, '%06d.txt' % (index)))
+    camera_timestamp = data["camera_timestamp"]
+    velodyne_timestamp = data["velodyne_timestamp"]
+    livox_timestamp = data["livox_timestamp"]
+    motion_info = data["motion"]
+
+    mx = motion_info[0]
+    my = motion_info[1]
+    mz = motion_info[2]
+
+    mroll = motion_info[3]
+    mpitch = motion_info[4]
+    myaw = motion_info[5]
+
+    mlinearx = motion_info[6]
+    mangularz = motion_info[7]
+    mtimestamp = motion_info[8]
+
+    # timestamp alignment: my motion timestamp tp camera timestamp
+    print(mx, my, myaw)
+    mx, my, myaw = rectify_motion(
+        mx, my, myaw, mlinearx, mangularz, mtimestamp, camera_timestamp)
+    print(mx, my, myaw)
+    # read raw label
     lines = [line.rstrip() for line in open(
         os.path.join(src_label_dir, '%06d.txt' % (index)))]
     f = open(os.path.join(des_label_dir, f"{index:06d}.txt"), 'w')
 
     for line in lines:
+        # read target label
         data_src = line.split(' ')
         data_src[1:] = [float(x) for x in data_src[1:]]
 
         type = data_src[0]
-        print(type)
+        # print(type)
         truncation = 0
         occlusion = 0
         alpha = 0
@@ -86,25 +103,26 @@ def generate_label_file(index, split="training"):
         ty = data_src[2]
         tz = data_src[3]
 
-        pos_sx = data_src[4]
-        neg_sx = data_src[5]
-        pos_sy = data_src[6]
-        neg_sy = data_src[7]
-        h = data_src[8]
-
         troll = 0
         tpitch = 0
-        tyaw = data_src[9]
+        tyaw = data_src[4]
 
-        mx = data_src[10]
-        my = data_src[11]
-        mz = data_src[12]
+        tlinearx = data_src[5]
+        tangularz = data_src[6]
 
-        mroll = data_src[13]
-        mpitch = data_src[14]
-        myaw = data_src[15]
+        pos_sx = data_src[7]
+        neg_sx = data_src[8]
+        pos_sy = data_src[9]
+        neg_sy = data_src[10]
+        h = data_src[11]
 
-        tdis = data_src[16]
+        ttimestamp = data_src[12]
+
+        # timestamp alignment: target timestamp tp camera timestamp
+        if type == "ship":
+            tx, ty, tyaw = rectify_motion(
+                tx, ty, tyaw, tlinearx, tangularz, ttimestamp, camera_timestamp)
+
         '''get 3d bbox corner points in my base_link coordinate'''
         '''
         qs: (8,3) array of vertices for the 3d box in following order:
@@ -152,7 +170,7 @@ def generate_label_file(index, split="training"):
         calib_filename = os.path.join(calib_dir, '%06d.txt' % (index))
         calib = utils.Calibration(calib_filename)
         # only draw 3d bounding box for objs in front of the camera
-        print(corners_3d)
+        # print(corners_3d)
         if np.any(corners_3d[:, 0] < 0.1):
             xmin, ymin, xmax, ymax = 0, 0, 0, 0
         else:
