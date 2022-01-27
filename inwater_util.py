@@ -61,6 +61,10 @@ class Calibration(object):
         self.V2B = calibs['Tr_velo_to_base']  # bv_T
         self.V2B = np.reshape(self.V2B, [3, 4])
         self.B2V = gp.inverse_rigid_trans(self.V2B)  # vb_T
+        # Rigid transform from Livox coord to base link coord
+        self.L2B = calibs['Tr_livox_to_base']  # bl_T
+        self.L2B = np.reshape(self.L2B, [3, 4])
+        self.B2L = gp.inverse_rigid_trans(self.L2B)  # lb_T
         # Rigid transform from Camera coord to base link coord
         self.C2B = calibs['Tr_cam_to_base']  # bc_T
         self.C2B = np.reshape(self.C2B, [3, 4])
@@ -69,6 +73,9 @@ class Calibration(object):
         self.V2C = np.dot(gp.Tcart2hom(self.B2C),
                           gp.Tcart2hom(self.V2B))  # cv_T
         self.V2C = self.V2C[0:3, :]
+        self.L2C = np.dot(gp.Tcart2hom(self.B2C),
+                          gp.Tcart2hom(self.L2B))  # cl_T
+        self.L2C = self.L2C[0:3, :]
 
         # Camera intrinsics and extrinsics
         self.P = calibs['P']
@@ -188,6 +195,11 @@ def compute_box_3d(obj, P, ExtrincT=None):
     # only draw 3d bounding box for objs in front of the camera
     if np.any(corners_3d[:, 0] < 0.1):
         corners_2d = None
+        if ExtrincT is not None:
+            n = corners_3d.shape[0]
+            pts_3d_extend = np.hstack((corners_3d, np.ones((n, 1))))
+            corners_3d = np.dot(pts_3d_extend, np.transpose(
+                ExtrincT))  # 8x4 4x3 = 8x3  # transform to sensor's coordinary, pls don't miss.
         return corners_2d, corners_3d
 
     if ExtrincT is not None:

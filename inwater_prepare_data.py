@@ -16,7 +16,7 @@ from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 # sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
-NUM_SAMPLE = 21
+NUM_SAMPLE = 50
 split = "training"
 
 
@@ -39,12 +39,66 @@ def read_info_file(filepath):
     return data
 
 
-def rectify_motion(x, y, yaw, linearx, angularz, timestamp, base_timestamp):
+def get_velo(lidar_dir, idx):
+    lidar_filename = os.path.join(lidar_dir, '%06d.bin' % (idx))
+    scan = np.fromfile(lidar_filename, dtype=np.float)  # read bin file.
+    scan = scan.reshape((-1, 3))
+    return scan
+
+
+def get_livox(livox_dir, idx):
+    lidar_filename = os.path.join(livox_dir, '%06d.bin' % (idx))
+    scan = np.fromfile(lidar_filename, dtype=np.float)  # read bin file.
+    scan = scan.reshape((-1, 3))
+    return scan
+
+
+def get_aligned_transform(lidartime_motion, cameratime_motion, T_l2b, T_b2l):
+    '''注意这里的myaw指的是base_link的旋转，不是lidar坐标系的旋转
+        T_l2m: 3x4
+        T_m2l: 3x4
+    '''
+    T_l2b = gp.Tcart2hom(T_l2b)
+    T_b2l = gp.Tcart2hom(T_b2l)
+
+    T_b_ltime2w = gp.Tmatrix(lidartime_motion.mroll, lidartime_motion.mpitch,
+                             lidartime_motion.myaw, lidartime_motion.mx, lidartime_motion.my, lidartime_motion.mz)
+    T_b_ctime2w = gp.Tmatrix(cameratime_motion.mroll, cameratime_motion.mpitch,
+                             cameratime_motion.myaw, cameratime_motion.mx, cameratime_motion.my, cameratime_motion.mz)
+    Tb_ltime2ctime = np.dot(gp.inverse_rigid_trans(
+        T_b_ctime2w), T_b_ltime2w)  # 4x4
+    Tl_ltime2ctime = np.dot(T_b2l, np.dot(Tb_ltime2ctime, T_l2b))  # 4x4
+    return Tl_ltime2ctime
+
+
+def rectify_motion(x, y, yaw,  linearx, angularz, timestamp, base_timestamp):
     deltaT = base_timestamp - timestamp
     yaw = yaw + angularz * deltaT
     x = x + np.cos(yaw) * linearx * deltaT
     y = y + np.sin(yaw) * linearx * deltaT
-    return x[0], y[0], yaw[0]
+    return x, y, yaw
+
+
+class motion(object):
+    def __init__(self, motion_info):
+        self.mx = motion_info[0]
+        self.my = motion_info[1]
+        self.mz = motion_info[2]
+
+        self.mroll = motion_info[3]
+        self.mpitch = motion_info[4]
+        self.myaw = motion_info[5]
+
+        self.mlinearx = motion_info[6]
+        self.mangularz = motion_info[7]
+        self.mtimestamp = motion_info[8]
+
+    def rectify_motion(self, base_timestamp):
+        deltaT = base_timestamp - self.mtimestamp
+        self.myaw = self.myaw + self.mangularz * deltaT
+        self.mx = self.mx + np.cos(self.myaw) * self.mlinearx * deltaT
+        self.my = self.my + np.sin(self.myaw) * self.mlinearx * deltaT
+        self.mtimestamp = base_timestamp
 
 
 def generate_label_file(index, split="training"):
@@ -61,28 +115,57 @@ def generate_label_file(index, split="training"):
 
     # read info
     data = read_info_file(os.path.join(info_dir, '%06d.txt' % (index)))
-    camera_timestamp = data["camera_timestamp"]
-    velodyne_timestamp = data["velodyne_timestamp"]
-    livox_timestamp = data["livox_timestamp"]
-    motion_info = data["motion"]
+    camera_timestamp = data["camera_timestamp"][0]
+    velodyne_timestamp = data["velodyne_timestamp"][0]
+    livox_timestamp = data["livox_timestamp"][0]
+    # ctime motion
+    ctime_motion_info = data["ctime_motion"]
+    ctime_motion = motion(ctime_motion_info)
+    # timestamp alignment: my motion timestamp to camera timestamp
+    ctime_motion.rectify_motion(camera_timestamp)
+    # vtime motion
+    vtime_motion_info = data["vtime_motion"]
+    vtime_motion = motion(vtime_motion_info)
+    # timestamp alignment: my motion timestamp to velodyne timestamp
+    vtime_motion.rectify_motion(velodyne_timestamp)
+    # ctime motion
+    ltime_motion_info = data["ltime_motion"]
+    ltime_motion = motion(ltime_motion_info)
+    # timestamp alignment: my motion timestamp to livox timestamp
+    ltime_motion.rectify_motion(livox_timestamp)
 
-    mx = motion_info[0]
-    my = motion_info[1]
-    mz = motion_info[2]
+    # pointcloud timestamp align to camera timestamp
+    calib_dir = os.path.join(split_dir, 'calib')
+    calib_filename = os.path.join(calib_dir, '%06d.txt' % (index))
+    calib = utils.Calibration(calib_filename)
 
-    mroll = motion_info[3]
-    mpitch = motion_info[4]
-    myaw = motion_info[5]
+    # pointcloud processing
+    raw_velo_dir = os.path.join(split_dir, 'velodyne_raw')
+    velo_dir = os.path.join(split_dir, 'velodyne')
+    raw_livox_dir = os.path.join(split_dir, 'livox_raw')
+    livox_dir = os.path.join(split_dir, 'livox')
+    # velodyne
+    velo_pc = get_velo(raw_velo_dir, index)  # nx3
+    # print(index, ":", mlinearx, mangularz / 3.1415926 * 180)
+    # print("base c time: ", mtimestamp, "ctime: ", camera_timestamp,
+    #       "vtime: ", velodyne_timestamp, "livox: ", livox_timestamp)
+    cv_T = get_aligned_transform(
+        vtime_motion, ctime_motion, calib.V2B, calib.B2V)  # 4x4
+    velo_pc_extend = np.hstack(
+        (velo_pc, np.ones((velo_pc.shape[0], 1))))  # nx4
+    velo_pc_extend = np.dot(velo_pc_extend, np.transpose(cv_T))  # nx4
+    velo_pc = velo_pc_extend[:, 0:3]
+    velo_pc.tofile(os.path.join(velo_dir, '%06d.bin' % (index)))
+    # livox
+    livox_pc = get_livox(raw_livox_dir, index)
+    cl_T = get_aligned_transform(
+        ltime_motion, ctime_motion, calib.L2B, calib.B2L)  # 4x4
+    livox_pc_extend = np.hstack(
+        (livox_pc, np.ones((livox_pc.shape[0], 1))))  # nx4
+    livox_pc_extend = np.dot(livox_pc_extend, np.transpose(cl_T))  # nx4
+    livox_pc = livox_pc_extend[:, 0:3]
+    livox_pc.tofile(os.path.join(livox_dir, '%06d.bin' % (index)))
 
-    mlinearx = motion_info[6]
-    mangularz = motion_info[7]
-    mtimestamp = motion_info[8]
-
-    # timestamp alignment: my motion timestamp tp camera timestamp
-    print(mx, my, myaw)
-    mx, my, myaw = rectify_motion(
-        mx, my, myaw, mlinearx, mangularz, mtimestamp, camera_timestamp)
-    print(mx, my, myaw)
     # read raw label
     lines = [line.rstrip() for line in open(
         os.path.join(src_label_dir, '%06d.txt' % (index)))]
@@ -143,7 +226,8 @@ def generate_label_file(index, split="training"):
         corners_3d = np.vstack([x_corners, y_corners, z_corners])
 
         wt_T = gp.Tmatrix(troll, tpitch, tyaw, tx, ty, tz)
-        wm_T = gp.Tmatrix(mroll, mpitch, myaw, mx, my, mz)
+        wm_T = gp.Tmatrix(ctime_motion.mroll, ctime_motion.mpitch,
+                          ctime_motion.myaw, ctime_motion.mx, ctime_motion.my, ctime_motion.mz)
         mt_T = np.dot(gp.inverse_rigid_trans(wm_T), wt_T)
         # rotate and translate 3d bounding box
         corners_3d = np.dot(mt_T, np.vstack((corners_3d, np.ones((1, 8)))))
@@ -237,6 +321,7 @@ def prepare_data():
     # generate_calib_parames_file(0, split)
     for data_idx in range(NUM_SAMPLE):
         generate_label_file(data_idx, split)
+    print("finish")
 
 
 if __name__ == '__main__':

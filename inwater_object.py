@@ -11,6 +11,7 @@ from viz_utils.plots import Annotator, colors, save_one_box
 import inwater_util as utils
 
 import os
+import time
 import sys
 import numpy as np
 import cv2
@@ -19,7 +20,7 @@ from PIL import Image
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ROOT_DIR = os.path.dirname(BASE_DIR)
 sys.path.append(os.path.join(ROOT_DIR, 'mayavi'))
-NUM_SAMPLE = 21
+NUM_SAMPLE = 50
 split = "training"
 
 try:
@@ -154,6 +155,46 @@ def show_image_with_boxes(img, objects, calib, annotator, show3d=True):
     return img1, img2
 
 
+def show_lidar_with_boxes_cv(pc_lidar, objects, calib,
+                             img_fov=False, img_width=None, img_height=None):
+    pc_lidar[:, 0] = pc_lidar[:, 0]
+    pc_lidar = pc_lidar[:, 0:2] * 10
+    pc_lidar = np.int16(pc_lidar)
+    print(pc_lidar)
+    pc_lidar = np.clip(pc_lidar, -990, 990)
+    pc_lidar = pc_lidar + 1000
+
+    img = np.zeros((2000, 2000, 3), dtype=np.uint8)
+    rows = pc_lidar[:, 1]
+    cols = pc_lidar[:, 0]
+    img[rows, cols] = (255, 255, 255)
+    img[rows + 1, cols] = (255, 255, 255)
+    img[rows - 1, cols] = (255, 255, 255)
+    img[rows, cols-1] = (255, 255, 255)
+    img[rows, cols+1] = (255, 255, 255)
+    img[rows - 1, cols - 1] = (255, 255, 255)
+    img[rows - 1, cols + 1] = (255, 255, 255)
+    img[rows+1, cols-1] = (255, 255, 255)
+
+    for obj in objects:
+        box3d_pts_2d, box3d_pts_3d = utils.compute_box_3d(
+            obj, calib.P, calib.B2V)
+        for i in range(4):
+            x = box3d_pts_3d[i, 0] * 10 + 1000
+            y = box3d_pts_3d[i, 1] * 10 + 1000
+            point = np.array([x, y])
+            point = np.int16(point)
+            if point[0] < 0 or point[0] > 1999 or point[1] < 0 or point[1] > 1999:
+                continue
+            pointd = (point[0], point[1])
+            cv2.circle(img, pointd, 1, (0, 0, 255), 2)
+    img = cv2.resize(img, (1000, 1000))
+    cv2.imshow("aaa", img)
+    cv2.waitKey(5000)
+
+    return img
+
+
 def show_lidar_with_boxes(pc_lidar, objects, calib,
                           img_fov=False, img_width=None, img_height=None):
     ''' Show all LiDAR points.
@@ -187,7 +228,7 @@ def show_lidar_with_boxes(pc_lidar, objects, calib,
     # livox远景：azimuth=180, elevation=72, focalpoint=[85, 0, 0], distance=220
     # livox近景：azimuth=180, elevation=72, focalpoint=[35, 0, 0], distance=220
     # velodyne俯视：azimuth=90, elevation=0, focalpoint=[32, 0, 0], distance=600
-    adjust_view(90, 0, [32, 0, 0], 600, fig)
+    adjust_view(90, 0, [5, 0, 0], 220, fig)  # 16
 
 
 def get_lidar_in_image_fov(pc_lidar, calib, xmin, ymin, xmax, ymax,
@@ -228,6 +269,21 @@ def show_lidar_on_image(pc_lidar, img, calib, img_width, img_height):
 
 
 def dataset_viz():
+    # save mkdir
+    gt_result_dir = os.path.join(ROOT_DIR, 'inWater/result/gt')
+    time_label = time.strftime("%Y-%m-%d %H:%M:%S", time.localtime())
+    new_gt_result_dir = os.path.join(gt_result_dir, time_label)
+    os.makedirs(new_gt_result_dir)
+    lidar_gt_savedir = os.path.join(new_gt_result_dir, 'lidar_seq')
+    pointsimage_savedir = os.path.join(
+        new_gt_result_dir, 'pointsimage_seq')
+    obj3dimage_savedir = os.path.join(new_gt_result_dir, 'obj3dimage_seq')
+    obj2dimage_savedir = os.path.join(new_gt_result_dir, 'obj2dimage_seq')
+    os.makedirs(lidar_gt_savedir)
+    os.makedirs(pointsimage_savedir)
+    os.makedirs(obj3dimage_savedir)
+    os.makedirs(obj2dimage_savedir)
+
     dataset = inwater_object(os.path.join(
         ROOT_DIR, 'inWater/object'), split=split)
     annotator = DetectAnnotator(os.path.join(
@@ -247,13 +303,18 @@ def dataset_viz():
         # Show lidar points on image.
         lidar_on_img = show_lidar_on_image(
             pc, img, calib, calib.imgW, calib.imgH)
-        lidar_on_img = cv2.cvtColor(lidar_on_img, cv2.COLOR_BGR2RGB)
-        Image.fromarray(lidar_on_img).show()
+        # lidar_on_img = cv2.cvtColor(lidar_on_img, cv2.COLOR_BGR2RGB)
+        # Image.fromarray(lidar_on_img).show()
         # Load data from dataset.
         objects = dataset.get_label_objects(data_idx)
         # Show all LiDAR points. Draw 3d box in LiDAR point cloud.
         show_lidar_with_boxes(pc, objects, calib,
                               True, img_width, img_height)
+        # test
+        # img_lidar_cv = show_lidar_with_boxes_cv(pc, objects, calib,
+        #                                         True, img_width, img_height)
+        # Image.fromarray(img_lidar_cv).show()
+        # raw_input()
         # Draw 2d, 3d box in image.
         for object in objects[:]:
             if object.is_in_image() == False:
@@ -264,20 +325,35 @@ def dataset_viz():
             show3d = True
             img2d, img3d = show_image_with_boxes(
                 img, objects, calib, annotator, show3d)
-            img2d = cv2.cvtColor(img2d, cv2.COLOR_BGR2RGB)
-            Image.fromarray(img2d).show()
-            if show3d:
-                img3d = cv2.cvtColor(img3d, cv2.COLOR_BGR2RGB)
-                Image.fromarray(img3d).show()
+            # img2d = cv2.cvtColor(img2d, cv2.COLOR_BGR2RGB)
+            # Image.fromarray(img2d).show()
+            # if show3d:
+            #     img3d = cv2.cvtColor(img3d, cv2.COLOR_BGR2RGB)
+            # Image.fromarray(img3d).show()
         else:
-            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-            Image.fromarray(img).show()
-        lidar_gt_seq_savedir = os.path.join(
-            ROOT_DIR, 'inWater/result/lidar_seq')
-        lidar_gt_seq_filename = os.path.join(
-            lidar_gt_seq_savedir, "%06d.png" % (data_idx))
-        save_fig(lidar_gt_seq_filename)
-        raw_input()
+            img2d = img
+            img3d = img
+            # img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            # Image.fromarray(img).show()
+        # raw_input()
+        # Save
+        # lidar_pc_gt
+        lidar_gt_filename = os.path.join(
+            lidar_gt_savedir, "%06d.png" % (data_idx))
+        save_fig(lidar_gt_filename)
+        # pointsimage
+        pointsimage_filename = os.path.join(
+            pointsimage_savedir, "%06d.png" % (data_idx))
+        cv2.imwrite(pointsimage_filename, lidar_on_img)
+        # object 3d in image
+        obj3dimage_filename = os.path.join(
+            obj3dimage_savedir, "%06d.png" % (data_idx))
+        cv2.imwrite(obj3dimage_filename, img3d)
+        # object 2d in image
+        obj2dimage_filename = os.path.join(
+            obj2dimage_savedir, "%06d.png" % (data_idx))
+        cv2.imwrite(obj2dimage_filename, img2d)
+    print("Finished!")
 
 
 if __name__ == '__main__':

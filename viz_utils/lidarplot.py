@@ -132,7 +132,7 @@ def draw_lidar(pc, color=None, fig=None, bgcolor=(0.16, 0.16, 0.24), pts_scale=1
     return fig
 
 
-def draw_gt_boxes3d(gt_boxes3d, fig, color=(1, 1, 1), line_width=1, draw_text=True, text_scale=(1, 1, 1), color_list=None):
+def draw_gt_boxes3d(gt_boxes3d, fig, color=(1, 1, 1), line_width=1, draw_text=True, text_scale=(1, 1, 1), color_list=None, 3d=False):
     ''' Draw 3D bounding boxes
     Args:
         gt_boxes3d: numpy array (n,8,3) for XYZs of the box corners
@@ -158,14 +158,14 @@ def draw_gt_boxes3d(gt_boxes3d, fig, color=(1, 1, 1), line_width=1, draw_text=Tr
             i, j = k, (k+1) % 4
             mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [
                         b[i, 2], b[j, 2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
+            if 3d == True:
+                i, j = k+4, (k+1) % 4 + 4
+                mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [
+                            b[i, 2], b[j, 2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
 
-            # i, j = k+4, (k+1) % 4 + 4
-            # mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [
-            #             b[i, 2], b[j, 2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
-
-            # i, j = k, k+4
-            # mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [
-            #             b[i, 2], b[j, 2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
+                i, j = k, k+4
+                mlab.plot3d([b[i, 0], b[j, 0]], [b[i, 1], b[j, 1]], [
+                            b[i, 2], b[j, 2]], color=color, tube_radius=None, line_width=line_width, figure=fig)
     # mlab.show(1)
     #mlab.view(azimuth=180, elevation=70, focalpoint=[ 12.0909996 , -1.04700089, -2.03249991], distance=62.0, figure=fig)
     return fig
